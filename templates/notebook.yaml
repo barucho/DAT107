@@ -1,0 +1,236 @@
+Description: A template to deploy Neptune Notebooks using CloudFormation resources
+Parameters:
+  NotebookInstanceType:
+    Description: >-
+      SageMaker Notebook instance type. Please refer to
+      https://aws.amazon.com/sagemaker/pricing/ for up to date allowed instance
+      types and pricing per AWS region.
+    Type: String
+    Default: ml.t3.medium
+    AllowedValues:
+      - ml.t2.medium
+      - ml.t2.large
+      - ml.t2.xlarge
+      - ml.t2.2xlarge
+      - ml.t3.medium
+      - ml.t3.large
+      - ml.m4.xlarge
+      - ml.m4.2xlarge
+      - ml.c4.large
+      - ml.c4.xlarge
+      - ml.c4.2xlarge
+      - ml.c5.xlarge
+      - ml.c5.2xlarge
+    ConstraintDescription: Must be a valid SageMaker instance type.
+  NotebookName:
+    Description: Name for the notebook instance. Ensure that this is unique.
+    MaxLength: 38
+    Type: String
+  GraphEndpoint:
+    Description: Endpoint for Analytics graph.
+    Type: String
+  GraphPort:
+    Description: Port to access your Analytics Graph.
+    Type: String
+    Default: '8182'
+  GraphVPC:
+    Description: >-
+      OPTIONAL: VPC Id of the VPC where your Analytics Graph is running. Leave
+      empty for public endpoints.
+    Type: String
+  GraphSubnet:
+    Description: >-
+      OPTIONAL: Id of a VPC subnet where your Analytics Graph is running. Leave
+      empty for public endpoints.
+    Type: String
+  GraphSecurityGroup:
+    Description: >-
+      OPTIONAL: Id of a VPC security group with access to your Analytics Graph.
+      Leave empty for public endpoints.
+    Type: String
+Conditions:
+  AddAnalyticsGraphVpc: !Not 
+    - !Equals 
+      - !Ref GraphVPC
+      - ''
+  AddAnalyticsGraphSubnet: !Not 
+    - !Equals 
+      - !Ref GraphSubnet
+      - ''
+  AddAnalyticsGraphSecurityGroup: !Not 
+    - !Equals 
+      - !Ref GraphSecurityGroup
+      - ''
+  AddNetworkOptions: !And 
+    - !Condition AddAnalyticsGraphVpc
+    - !Condition AddAnalyticsGraphSubnet
+  CreateSagemakerSecurityGroup: !And 
+    - !Condition AddNetworkOptions
+    - !Not 
+      - !Condition AddAnalyticsGraphSecurityGroup
+  IsIadRegion: !Equals 
+    - !Ref 'AWS::Region'
+    - us-east-1
+Resources:
+  SageMakerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Condition: CreateSagemakerSecurityGroup
+    Properties:
+      GroupDescription: Allow Access
+      VpcId: !Ref GraphVPC
+      Tags:
+        - Key: Name
+          Value: !Sub Neptune-Analytics
+        - Key: StackId
+          Value: !Sub '${AWS::StackId}'
+        - Key: Stack
+          Value: !Sub '${AWS::Region}-${AWS::StackName}'
+        - Key: Application
+          Value: NeptuneCloudformation
+  NeptuneAnalyticsNotebookInstance:
+    Type: 'AWS::SageMaker::NotebookInstance'
+    Properties:
+      InstanceType: !Ref NotebookInstanceType
+      PlatformIdentifier: notebook-al2-v2
+      NotebookInstanceName: !Join 
+        - ''
+        - - aws-neptune-analytics-
+          - !Ref NotebookName
+      SubnetId: !If 
+        - AddNetworkOptions
+        - !Ref GraphSubnet
+        - !Ref 'AWS::NoValue'
+      SecurityGroupIds: !If 
+        - AddNetworkOptions
+        - !If 
+          - AddAnalyticsGraphSecurityGroup
+          - - !Ref GraphSecurityGroup
+          - - !GetAtt 
+              - SageMakerSecurityGroup
+              - GroupId
+        - !Ref 'AWS::NoValue'
+      RoleArn: !GetAtt 
+        - ExecutionRole
+        - Arn
+      LifecycleConfigName: !GetAtt 
+        - NeptuneAnalyticsNotebookInstanceLifecycleConfig
+        - NotebookInstanceLifecycleConfigName
+      Tags:
+        - Key: StackId
+          Value: !Sub '${AWS::StackId}'
+        - Key: Stack
+          Value: !Sub '${AWS::Region}-${AWS::StackName}'
+        - Key: Application
+          Value: NeptuneCloudformation
+        - Key: aws-neptune-analytics-graph-endpoint
+          Value: !Ref GraphEndpoint
+  NeptuneAnalyticsNotebookInstanceLifecycleConfig:
+    Type: 'AWS::SageMaker::NotebookInstanceLifecycleConfig'
+    Properties:
+      OnStart:
+        - Content: !Base64 
+            'Fn::Join':
+              - ''
+              - - |+
+                  #!/bin/bash
+
+                - |+
+                  sudo -u ec2-user -i <<'EOF'
+
+                - |
+                  echo "export GRAPH_NOTEBOOK_AUTH_MODE=IAM" >> ~/.bashrc
+                - |
+                  echo "export GRAPH_NOTEBOOK_SSL=True" >> ~/.bashrc
+                - >
+                  echo "export GRAPH_NOTEBOOK_SERVICE=neptune-graph" >>
+                  ~/.bashrc
+                - echo "export GRAPH_NOTEBOOK_HOST=
+                - !Ref GraphEndpoint
+                - |
+                  " >> ~/.bashrc
+                - echo "export GRAPH_NOTEBOOK_PORT=
+                - !Ref GraphPort
+                - |
+                  " >> ~/.bashrc
+                - |
+                  echo "export NEPTUNE_LOAD_FROM_S3_ROLE_ARN=" >> ~/.bashrc
+                - echo "export AWS_REGION=
+                - !Ref 'AWS::Region'
+                - |+
+                  " >> ~/.bashrc
+
+                - 'aws s3 cp s3://'
+                - !If 
+                  - IsIadRegion
+                  - aws-neptune-notebook
+                  - !Sub 'aws-neptune-notebook-${AWS::Region}'
+                - |
+                  /graph_notebook.tar.gz /tmp/graph_notebook.tar.gz
+                - |
+                  rm -rf /tmp/graph_notebook
+                - |
+                  tar -zxvf /tmp/graph_notebook.tar.gz -C /tmp
+                - |+
+                  /tmp/graph_notebook/install.sh
+
+                - EOF
+  ExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - sagemaker.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: !Sub SagemakerNotebookNeptuneAnalyticsPolicy-${AWS::StackName} 
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:ListBucket'
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::*'
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/sagemaker/*
+              - Effect: Allow
+                Action: 'neptune-graph:*'
+                Resource: !Sub 'arn:aws:neptune-graph:${AWS::Region}:${AWS::AccountId}:*/*'
+              - Effect: Allow
+                Action: 'sagemaker:DescribeNotebookInstance'
+                Resource: !Sub >-
+                  arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:notebook-instance/*
+              - Effect: Allow
+                Action:
+                  - 'bedrock:InvokeModel'
+                  - 'bedrock:InvokeModelWithResponseStream'
+                Resource: !Sub >-
+                  arn:aws:bedrock:${AWS::Region}::foundation-model/*
+Outputs:
+  NeptuneAnalyticsNotebookInstanceId:
+    Value: !Ref NeptuneAnalyticsNotebookInstance
+  NeptuneAnalyticsSagemakerNotebook:
+    Value: !Join 
+      - ''
+      - - 'https://'
+        - !Select 
+          - 1
+          - !Split 
+            - /
+            - !Ref NeptuneAnalyticsNotebookInstance
+        - .notebook.
+        - !Ref 'AWS::Region'
+        - .sagemaker.aws/
+  NeptuneAnalyticsNotebookInstanceLifecycleConfigId:
+    Value: !Ref NeptuneAnalyticsNotebookInstanceLifecycleConfig
