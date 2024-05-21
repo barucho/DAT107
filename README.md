@@ -5,14 +5,15 @@
 1. This repo contain:
 
     ```
-    .
-    ├── DAT107_streamlit_chatbot.py
-    ├── DAT107_workshshop_notebook.ipynb
-    ├── LICENSE
-    ├── LOGO.jpg
-    ├── README.md
-    └── templates
-        └── notebook.yaml
+.
+├── LICENSE
+├── README.md
+├── lab
+│   ├── DAT107_streamlit_chatbot.py
+│   ├── DAT107_workshshop_notebook.ipynb
+│   └── LOGO.jpg
+└── templates
+    └── notebook.yaml
     ```
 
 2. Create the notebook from the templates directory by using AWS CLI or by using the CloudFormation [console](https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks?filteringText=&filteringStatus=active&viewNested=true)
