@@ -4,7 +4,7 @@
 
 1. This repo contain:
 
-    ```
+```
 .
 ├── LICENSE
 ├── README.md
@@ -14,7 +14,7 @@
 │   └── LOGO.jpg
 └── templates
     └── notebook.yaml
-    ```
+```
 
 2. Create the notebook from the templates directory by using AWS CLI or by using the CloudFormation [console](https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks?filteringText=&filteringStatus=active&viewNested=true)
 or by using this AWS CLI command
